@@ -1,0 +1,20 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ue-sim
+spec:
+  template:
+    spec:
+      containers:
+        - name: ue-sim
+          image: cloud-native5gnetworkfunctions-ue-sim:latest
+          imagePullPolicy: Never
+          env:
+            - name: AMF_ADDRESS
+              value: "amf:50051"
+            - name: UPF_ADDRESS
+              value: "upf:50052"
+            - name: NUM_UES
+              value: "50"
+      restartPolicy: Never
+  backoffLimit: 2

@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: amf
+  labels:
+    app: amf
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: amf
+  template:
+    metadata:
+      labels:
+        app: amf
+    spec:
+      containers:
+        - name: amf
+          image: cloud-native5gnetworkfunctions-amf:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 50051
+          env:
+            - name: AMF_PORT
+              value: "50051"
+            - name: UPF_ADDRESS
+              value: "upf:50052"
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "250m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: amf
+spec:
+  selector:
+    app: amf
+  ports:
+    - protocol: TCP
+      port: 50051
+      targetPort: 50051

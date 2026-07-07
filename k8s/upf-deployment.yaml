@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: upf
+  labels:
+    app: upf
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: upf
+  template:
+    metadata:
+      labels:
+        app: upf
+    spec:
+      containers:
+        - name: upf
+          image: cloud-native5gnetworkfunctions-upf:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 50052
+          env:
+            - name: UPF_PORT
+              value: "50052"
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "250m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: upf
+spec:
+  selector:
+    app: upf
+  ports:
+    - protocol: TCP
+      port: 50052
+      targetPort: 50052

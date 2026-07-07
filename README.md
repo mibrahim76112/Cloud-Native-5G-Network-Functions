@@ -1,8 +1,6 @@
 # 5G Cloud-Native Network Functions
 
-> 🚧 **Project in progress** — Docker Compose deployment complete, Kubernetes ongoing.
-
-A C++17 implementation of two 5G core Network Functions communicating over gRPC, containerized with Docker, and deployed on Kubernetes. Built to mirror the architecture used in real 5G core products at companies like Nokia and Ericsson.
+A C++17 implementation of two 5G core Network Functions — AMF and UPF — communicating over gRPC, containerized with Docker, and orchestrated on Kubernetes. Built to mirror the architecture used in real 5G core products at companies like Nokia and Ericsson.
 
 ---
 
@@ -22,13 +20,13 @@ The system simulates a simplified 5G core with three components talking to each 
 - **Environment-variable-driven config** (12-factor app style) — AMF_PORT, UPF_ADDRESS, NUM_UES all configurable at runtime
 - **Multi-stage Docker builds** — separate build and runtime images to minimize container size
 - **Docker Compose** brings all three services up on an isolated bridge network with health checks and dependency ordering so UPF is always ready before AMF connects
-- **Kubernetes manifests** target minikube for local orchestration testing
+- **Kubernetes manifests** deploy AMF and UPF as Deployments with Services for DNS-based discovery, and UE simulator as a Job that runs once and exits
 
 ---
 
 ## Benchmark Results
 
-**Docker Compose deployment — 50 UEs, 500 packets:**
+**Docker Compose — 50 UEs, 500 packets:**
 
 | Metric | Registration (N1) | Packet Classification (N4) |
 |---|---|---|
@@ -36,32 +34,54 @@ The system simulates a simplified 5G core with three components talking to each 
 | P50 Latency | 3.4 ms | 1.3 ms |
 | P95 Latency | 5.4 ms | 2.1 ms |
 | P99 Latency | 831 ms* | 3.0 ms |
-| Min Latency | 2.5 ms | 0.7 ms |
 
-> *P99 registration spike caused by gRPC cold-start channel initialization on first connection. P50 of 3.4ms reflects steady-state performance.
+> *P99 registration spike caused by gRPC cold-start channel initialization on first connection.
+
+**Kubernetes (minikube) — 50 UEs, 500 packets:**
+
+| Metric | Registration (N1) | Packet Classification (N4) |
+|---|---|---|
+| Throughput | 209 reg/sec | 485 pkt/sec |
+| P50 Latency | 3.0 ms | 1.3 ms |
+| P95 Latency | 9.8 ms | 3.0 ms |
+| P99 Latency | 60.9 ms | 25.3 ms |
+| Min Latency | 2.2 ms | 0.6 ms |
+
+Registration throughput improved **4x** on Kubernetes vs Docker Compose due to optimized CNI networking.
 
 ---
 
 ## How To Run
 
-### Option 1 — Docker Compose (recommended)
+### Option 1 — Docker Compose
 
 ```bash
 docker-compose up --build
 ```
 
-All three services start automatically in the correct order. UE simulator runs the benchmark and exits.
+### Option 2 — Kubernetes (minikube)
 
-### Option 2 — Local dev container
+```bash
+minikube start
+minikube image load cloud-native5gnetworkfunctions-upf:latest
+minikube image load cloud-native5gnetworkfunctions-amf:latest
+minikube image load cloud-native5gnetworkfunctions-ue-sim:latest
+
+kubectl apply -f k8s/upf-deployment.yaml
+kubectl apply -f k8s/amf-deployment.yaml
+kubectl apply -f k8s/ue-sim-job.yaml
+
+kubectl get pods
+kubectl logs <ue-sim-pod-name>
+```
+
+### Option 3 — Local dev container
 
 Open in VSCode → Reopen in Container, then:
 
 ```bash
 mkdir build && cd build && cmake .. && make -j$(nproc)
-```
 
-Run in 3 terminals:
-```bash
 # Terminal 1
 /workspace/build/upf/upf_server
 
@@ -80,14 +100,14 @@ AMF_ADDRESS=localhost:50051 UPF_ADDRESS=localhost:50052 NUM_UES=50 /workspace/bu
 - [x] UE simulator with P50/P95/P99 latency benchmarking
 - [x] Dev container setup (VSCode + Docker)
 - [x] Docker multi-stage builds
-- [x] docker-compose multi-NF deployment
-- [x] Benchmark with Docker Compose (50 UEs, 500 packets)
-- [ ] Kubernetes manifests (minikube)
+- [x] Docker Compose multi-NF deployment
+- [x] Kubernetes manifests on minikube
+- [x] Benchmark results across Docker Compose and Kubernetes
 - [ ] Unit tests with gtest
 - [ ] Extended benchmark (500 UEs)
 
 ---
 
-**Stack:** C++17 · gRPC v1.60 · Protocol Buffers · CMake · Docker · Kubernetes  
-**3GPP Interfaces:** N1 (UE↔AMF) · N4 (AMF↔UPF)  
+**Stack:** C++17 · gRPC v1.60 · Protocol Buffers · CMake · Docker · Kubernetes
+**3GPP Interfaces:** N1 (UE↔AMF) · N4 (AMF↔UPF)
 **References:** 3GPP TS 23.501 · 3GPP TS 29.244 · gRPC C++ Docs
