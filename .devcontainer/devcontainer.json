@@ -1,0 +1,25 @@
+{
+  "name": "5G Cloud-Native NF Dev",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
+  "workspaceFolder": "/workspace",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode.cpptools",
+        "ms-vscode.cmake-tools",
+        "zxh404.vscode-proto3",
+        "ms-azuretools.vscode-docker"
+      ],
+      "settings": {
+        "cmake.buildDirectory": "${workspaceFolder}/build",
+        "C_Cpp.default.compilerPath": "/usr/bin/g++"
+      }
+    }
+  },
+  "forwardPorts": [50051, 50052],
+  "postCreateCommand": "echo 'Dev container ready. Run: mkdir build && cd build && cmake .. && make -j$(nproc)'"
+}

@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+package n4;
+
+service N4Service {
+  rpc EstablishSession (SessionEstablishRequest)  returns (SessionEstablishResponse);
+  rpc ReleaseSession   (SessionReleaseRequest)    returns (SessionReleaseResponse);
+  rpc ClassifyPacket   (PacketClassifyRequest)    returns (PacketClassifyResponse);
+}
+
+message SessionEstablishRequest {
+  string supi        = 1;
+  string dnn         = 2;
+  string ue_ip       = 3;
+  uint32 qos_profile = 4;
+}
+
+message SessionEstablishResponse {
+  bool   success      = 1;
+  string session_id   = 2;
+  string cause        = 3;
+  int64  timestamp_us = 4;
+}
+
+message SessionReleaseRequest {
+  string session_id = 1;
+  string supi       = 2;
+}
+
+message SessionReleaseResponse {
+  bool   success = 1;
+  string cause   = 2;
+}
+
+message PacketClassifyRequest {
+  string src_ip     = 1;
+  string dst_ip     = 2;
+  uint32 src_port   = 3;
+  uint32 dst_port   = 4;
+  string protocol   = 5;
+  string session_id = 6;
+}
+
+message PacketClassifyResponse {
+  string action       = 1;
+  string next_hop     = 2;
+  uint32 qos_class    = 3;
+  int64  timestamp_us = 4;
+}

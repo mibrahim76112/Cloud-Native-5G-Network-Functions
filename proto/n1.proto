@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+package n1;
+
+service N1Service {
+  rpc Register   (RegistrationRequest)   returns (RegistrationResponse);
+  rpc Deregister (DeregistrationRequest) returns (DeregistrationResponse);
+}
+
+message RegistrationRequest {
+  string supi              = 1;
+  string registration_type = 2;
+  string requested_nssai   = 3;
+}
+
+message RegistrationResponse {
+  bool   accepted          = 1;
+  string amf_ue_ngap_id   = 2;
+  string cause             = 3;
+  int64  timestamp_us      = 4;
+}
+
+message DeregistrationRequest {
+  string supi              = 1;
+  string amf_ue_ngap_id   = 2;
+}
+
+message DeregistrationResponse {
+  bool   success = 1;
+  string cause   = 2;
+}
