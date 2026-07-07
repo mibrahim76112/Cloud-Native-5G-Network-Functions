@@ -4,23 +4,18 @@ A C++17 implementation of two 5G core Network Functions — AMF and UPF — comm
 
 ---
 
-## What It Does
+## Architecture
 
-The system simulates a simplified 5G core with three components talking to each other over gRPC:
+```
+[ UE Simulator ] --N1/gRPC--> [ AMF :50051 ] --N4/gRPC--> [ UPF :50052 ]
+                               |                                          |
+                               +-------- 5g-core bridge network ----------+
+                                         (Docker / Kubernetes)
+```
 
-- **AMF** (Access & Mobility Management Function) — handles UE registration over the N1 interface, validates subscriber identities (SUPI/NGAP IDs), and orchestrates PDU session establishment with the UPF
-- **UPF** (User Plane Function) — manages PDU sessions over the N4 interface and classifies packets in real time based on 3GPP QoS profiles (voice, video, best-effort), resolving forwarding decisions and next-hop routing
-- **UE Simulator** — simulates hundreds of phones registering and sending traffic simultaneously, benchmarking end-to-end latency (P50/P95/P99) and throughput across both interfaces
+The UE Simulator sends registration requests to the AMF over the N1 interface. The AMF validates each UE identity (SUPI/NGAP ID), then calls the UPF over N4 to establish a PDU session and assign an IP. The UPF handles all subsequent packet classification — inspecting source/destination IP, port, and protocol to apply 3GPP QoS profiles (voice, video, best-effort) and return a forwarding decision with next-hop resolution. All three services run as isolated containers on a private bridge network, with Docker DNS resolving service names automatically. On Kubernetes, AMF and UPF run as Deployments with ClusterIP Services for discovery, and the UE simulator runs as a Job that benchmarks the system and exits.
 
----
-
-## Key Design Decisions
-
-- **gRPC over Protocol Buffers** for inter-NF communication — same transport used in real 5G vendor stacks
-- **Environment-variable-driven config** (12-factor app style) — AMF_PORT, UPF_ADDRESS, NUM_UES all configurable at runtime
-- **Multi-stage Docker builds** — separate build and runtime images to minimize container size
-- **Docker Compose** brings all three services up on an isolated bridge network with health checks and dependency ordering so UPF is always ready before AMF connects
-- **Kubernetes manifests** deploy AMF and UPF as Deployments with Services for DNS-based discovery, and UE simulator as a Job that runs once and exits
+The codebase uses gRPC over Protocol Buffers for inter-NF communication — the same transport used in real 5G vendor stacks — with interface names (N1, N4), message types (SUPI, NGAP ID, PDU session, DNN, QoS profile), and procedures modelled directly from 3GPP TS 23.501 and TS 29.244. Configuration is fully environment-variable-driven (12-factor app style). Docker images use multi-stage builds to keep runtime containers minimal.
 
 ---
 
@@ -35,7 +30,7 @@ The system simulates a simplified 5G core with three components talking to each 
 | P95 Latency | 5.4 ms | 2.1 ms |
 | P99 Latency | 831 ms* | 3.0 ms |
 
-> *P99 registration spike caused by gRPC cold-start channel initialization on first connection.
+> *P99 spike caused by gRPC cold-start on first connection. P50 of 3.4ms reflects steady-state performance.
 
 **Kubernetes (minikube) — 50 UEs, 500 packets:**
 
@@ -91,20 +86,6 @@ UPF_ADDRESS=localhost:50052 /workspace/build/amf/amf_server
 # Terminal 3
 AMF_ADDRESS=localhost:50051 UPF_ADDRESS=localhost:50052 NUM_UES=50 /workspace/build/ue-sim/ue_sim
 ```
-
----
-
-## Roadmap
-
-- [x] C++17 AMF + UPF gRPC services with N1/N4 interfaces
-- [x] UE simulator with P50/P95/P99 latency benchmarking
-- [x] Dev container setup (VSCode + Docker)
-- [x] Docker multi-stage builds
-- [x] Docker Compose multi-NF deployment
-- [x] Kubernetes manifests on minikube
-- [x] Benchmark results across Docker Compose and Kubernetes
-- [ ] Unit tests with gtest
-- [ ] Extended benchmark (500 UEs)
 
 ---
 
