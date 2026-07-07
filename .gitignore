@@ -1,3 +1,4 @@
+tee /workspace/.gitignore << 'EOF'
 # Build output
 build/
 cmake-build-*/
@@ -27,3 +28,16 @@ install_manifest.txt
 # OS
 .DS_Store
 Thumbs.db
+
+# Kubernetes
+*.kubeconfig
+
+# Logs
+*.log
+
+# gRPC generated (in case generated outside build dir)
+*.pb.cc
+*.pb.h
+*.grpc.pb.cc
+*.grpc.pb.h
+EOF
