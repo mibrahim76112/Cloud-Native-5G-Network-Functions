@@ -5,7 +5,10 @@
 #include <numeric>
 #include <algorithm>
 #include <thread>
+#include <mutex>
+#include <atomic>
 #include <iomanip>
+#include <future>
 
 #include <grpcpp/grpcpp.h>
 #include "n1.grpc.pb.h"
@@ -104,74 +107,149 @@ void print_stats(const std::string& label, const Stats& s) {
     std::cout << "  Max        : " << s.max_us         << " µs\n";
 }
 
-int main() {
-    const char* amf_env = std::getenv("AMF_ADDRESS");
-    const char* upf_env = std::getenv("UPF_ADDRESS");
-    const char* n_env   = std::getenv("NUM_UES");
+// ── Sequential benchmark ──────────────────────────────────────────────────
+Stats run_sequential(UESimulator& sim, int num_ues) {
+    std::cout << "\n[BENCH] Sequential registration (" << num_ues << " UEs)...\n";
+    std::vector<int64_t> latencies;
+    int success = 0;
 
-    std::string amf_addr = amf_env ? amf_env : "localhost:50051";
-    std::string upf_addr = upf_env ? upf_env : "localhost:50052";
-    int         num_ues  = n_env   ? std::stoi(n_env) : 200;
+    auto t0 = std::chrono::high_resolution_clock::now();
+    for (int i = 0; i < num_ues; i++) {
+        std::string supi = "imsi-00101000000" + std::to_string(10000 + i);
+        auto r = sim.register_ue(supi);
+        latencies.push_back(r.latency_us);
+        if (r.success) success++;
+    }
+    auto t1 = std::chrono::high_resolution_clock::now();
+    double elapsed = std::chrono::duration<double>(t1 - t0).count();
+
+    std::cout << "  Successful: " << success << "/" << num_ues << "\n";
+    return compute_stats(latencies, elapsed);
+}
+
+// ── Concurrent benchmark ──────────────────────────────────────────────────
+Stats run_concurrent(const std::string& amf_addr, const std::string& upf_addr,
+                     int num_ues, int num_threads) {
+    std::cout << "\n[BENCH] Concurrent registration (" << num_ues
+              << " UEs, " << num_threads << " threads)...\n";
+
+    std::vector<int64_t> latencies;
+    std::mutex           lat_mutex;
+    std::atomic<int>     success{0};
+
+    int ues_per_thread = num_ues / num_threads;
+
+    auto t0 = std::chrono::high_resolution_clock::now();
+
+    std::vector<std::future<void>> futures;
+    for (int t = 0; t < num_threads; t++) {
+        int start_idx = t * ues_per_thread;
+        futures.push_back(std::async(std::launch::async,
+            [&, start_idx]() {
+                // Each thread gets its own stub (gRPC channels are thread-safe
+                // but stubs are not — create per thread)
+                UESimulator sim(amf_addr, upf_addr);
+                for (int i = start_idx; i < start_idx + ues_per_thread; i++) {
+                    std::string supi = "imsi-99901000000" + std::to_string(10000 + i);
+                    auto r = sim.register_ue(supi);
+                    {
+                        std::lock_guard<std::mutex> lock(lat_mutex);
+                        latencies.push_back(r.latency_us);
+                    }
+                    if (r.success) success++;
+                }
+            }));
+    }
+
+    for (auto& f : futures) f.wait();
+
+    auto t1 = std::chrono::high_resolution_clock::now();
+    double elapsed = std::chrono::duration<double>(t1 - t0).count();
+
+    std::cout << "  Successful: " << success << "/" << num_ues << "\n";
+    return compute_stats(latencies, elapsed);
+}
+
+// ── Packet classification benchmark ──────────────────────────────────────
+Stats run_classification(UESimulator& sim, int num_packets) {
+    std::cout << "\n[BENCH] Packet classification (" << num_packets << " packets)...\n";
+    std::vector<int64_t> latencies;
+    int success = 0;
+
+    auto t0 = std::chrono::high_resolution_clock::now();
+    for (int i = 0; i < num_packets; i++) {
+        std::string src_ip = "10.0.0." + std::to_string((i % 254) + 1);
+        auto r = sim.classify_packet(src_ip, "sess-" + std::to_string((i % 50) + 1));
+        latencies.push_back(r.latency_us);
+        if (r.success) success++;
+    }
+    auto t1 = std::chrono::high_resolution_clock::now();
+    double elapsed = std::chrono::duration<double>(t1 - t0).count();
+
+    std::cout << "  Successful: " << success << "/" << num_packets << "\n";
+    return compute_stats(latencies, elapsed);
+}
+
+int main() {
+    const char* amf_env      = std::getenv("AMF_ADDRESS");
+    const char* upf_env      = std::getenv("UPF_ADDRESS");
+    const char* n_env        = std::getenv("NUM_UES");
+    const char* threads_env  = std::getenv("BENCH_THREADS");
+    const char* pkts_env     = std::getenv("NUM_PACKETS");
+
+    std::string amf_addr    = amf_env     ? amf_env     : "localhost:50051";
+    std::string upf_addr    = upf_env     ? upf_env     : "localhost:50052";
+    int         num_ues     = n_env       ? std::stoi(n_env)       : 100;
+    int         num_threads = threads_env ? std::stoi(threads_env) : 4;
+    int         num_packets = pkts_env    ? std::stoi(pkts_env)    : 1000;
 
     std::cout << "╔══════════════════════════════════════╗\n";
     std::cout << "║   5G UE Simulator + Benchmark       ║\n";
     std::cout << "╚══════════════════════════════════════╝\n";
-    std::cout << "AMF: " << amf_addr << "  UPF: " << upf_addr << "\n";
-    std::cout << "UEs to simulate: " << num_ues << "\n\n";
+    std::cout << "AMF      : " << amf_addr    << "\n";
+    std::cout << "UPF      : " << upf_addr    << "\n";
+    std::cout << "UEs      : " << num_ues     << "\n";
+    std::cout << "Threads  : " << num_threads << "\n";
+    std::cout << "Packets  : " << num_packets << "\n\n";
 
     std::cout << "Waiting 2s for NFs to be ready...\n";
     std::this_thread::sleep_for(std::chrono::seconds(2));
 
     UESimulator sim(amf_addr, upf_addr);
 
-    // Benchmark 1: Registration
-    std::cout << "\n[BENCH] Running registration benchmark (" << num_ues << " UEs)...\n";
-    std::vector<int64_t> reg_latencies;
-    int reg_success = 0;
+    // Run sequential baseline
+    auto seq_stats = run_sequential(sim, num_ues);
+    print_stats("Sequential Registration (N1)", seq_stats);
 
-    auto bench_start = std::chrono::high_resolution_clock::now();
-    for (int i = 0; i < num_ues; i++) {
-        std::string supi = "imsi-00101000000" + std::to_string(10000 + i);
-        auto result = sim.register_ue(supi);
-        reg_latencies.push_back(result.latency_us);
-        if (result.success) reg_success++;
-    }
-    auto bench_end = std::chrono::high_resolution_clock::now();
-    double reg_elapsed = std::chrono::duration<double>(bench_end - bench_start).count();
+    // Run concurrent load test
+    auto con_stats = run_concurrent(amf_addr, upf_addr, num_ues, num_threads);
+    print_stats("Concurrent Registration (N1, " +
+                std::to_string(num_threads) + " threads)", con_stats);
 
-    std::cout << "  Successful: " << reg_success << "/" << num_ues << "\n";
-    auto reg_stats = compute_stats(reg_latencies, reg_elapsed);
-    print_stats("Registration (N1) Latency", reg_stats);
+    // Packet classification
+    auto pkt_stats = run_classification(sim, num_packets);
+    print_stats("Packet Classification (N4)", pkt_stats);
 
-    // Benchmark 2: Packet Classification
-    int pkt_count = num_ues * 10;
-    std::cout << "\n[BENCH] Running packet classification (" << pkt_count << " packets)...\n";
-    std::vector<int64_t> pkt_latencies;
-    int pkt_success = 0;
-
-    bench_start = std::chrono::high_resolution_clock::now();
-    for (int i = 0; i < pkt_count; i++) {
-        std::string src_ip = "10.0.0." + std::to_string((i % 254) + 1);
-        auto result = sim.classify_packet(src_ip, "sess-" + std::to_string((i % num_ues) + 1));
-        pkt_latencies.push_back(result.latency_us);
-        if (result.success) pkt_success++;
-    }
-    bench_end = std::chrono::high_resolution_clock::now();
-    double pkt_elapsed = std::chrono::duration<double>(bench_end - bench_start).count();
-
-    std::cout << "  Successful: " << pkt_success << "/" << pkt_count << "\n";
-    auto pkt_stats = compute_stats(pkt_latencies, pkt_elapsed);
-    print_stats("Packet Classification (N4) Latency", pkt_stats);
-
-    std::cout << "\n══════════════════════════════════════════\n";
+    // Summary
+    std::cout << "\n══════════════════════════════════════════════════\n";
     std::cout << "  BENCHMARK SUMMARY\n";
-    std::cout << "══════════════════════════════════════════\n";
+    std::cout << "══════════════════════════════════════════════════\n";
     std::cout << std::fixed << std::setprecision(0);
-    std::cout << "  Registration throughput   : " << reg_stats.throughput_rps << " reg/sec\n";
-    std::cout << "  Registration P99 latency  : " << reg_stats.p99_us         << " µs\n";
-    std::cout << "  Classification throughput : " << pkt_stats.throughput_rps << " pkt/sec\n";
-    std::cout << "  Classification P99 latency: " << pkt_stats.p99_us         << " µs\n";
-    std::cout << "══════════════════════════════════════════\n\n";
+    std::cout << "  Sequential reg throughput  : "
+              << seq_stats.throughput_rps  << " reg/sec\n";
+    std::cout << "  Concurrent reg throughput  : "
+              << con_stats.throughput_rps  << " reg/sec  ("
+              << num_threads << " threads)\n";
+    std::cout << "  Throughput gain            : "
+              << std::setprecision(1)
+              << (con_stats.throughput_rps / seq_stats.throughput_rps)
+              << "x\n";
+    std::cout << "  Classification throughput  : "
+              << std::setprecision(0)
+              << pkt_stats.throughput_rps  << " pkt/sec\n";
+    std::cout << "  Classification P99 latency : "
+              << pkt_stats.p99_us          << " µs\n";
+    std::cout << "══════════════════════════════════════════════════\n\n";
 
     return 0;
 }

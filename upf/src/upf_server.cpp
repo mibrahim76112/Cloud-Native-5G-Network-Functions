@@ -3,12 +3,26 @@
 #include <iostream>
 #include <sstream>
 #include <chrono>
+#include <future>
 
 static int64_t now_us() {
     return std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::system_clock::now().time_since_epoch()
     ).count();
 }
+
+// ── Constructor ───────────────────────────────────────────────────────────
+
+UpfServiceImpl::UpfServiceImpl(size_t num_threads) {
+    if (num_threads > 0) {
+        pool_ = std::make_unique<ThreadPool>(num_threads);
+        std::cout << "[UPF] Multi-threaded mode: " << num_threads << " workers\n";
+    } else {
+        std::cout << "[UPF] Single-threaded mode (baseline)\n";
+    }
+}
+
+// ── EstablishSession ──────────────────────────────────────────────────────
 
 grpc::Status UpfServiceImpl::EstablishSession(
     grpc::ServerContext* /*ctx*/,
@@ -47,6 +61,8 @@ grpc::Status UpfServiceImpl::EstablishSession(
     return grpc::Status::OK;
 }
 
+// ── ReleaseSession ────────────────────────────────────────────────────────
+
 grpc::Status UpfServiceImpl::ReleaseSession(
     grpc::ServerContext* /*ctx*/,
     const n4::SessionReleaseRequest* req,
@@ -71,27 +87,62 @@ grpc::Status UpfServiceImpl::ReleaseSession(
     return grpc::Status::OK;
 }
 
+// ── ClassifyPacket ────────────────────────────────────────────────────────
+// If thread pool is enabled, classification runs on a worker thread.
+// The gRPC call blocks until the worker completes via a promise/future.
+
 grpc::Status UpfServiceImpl::ClassifyPacket(
-    grpc::ServerContext* /*ctx*/,
+    grpc::ServerContext* ctx,
     const n4::PacketClassifyRequest* req,
     n4::PacketClassifyResponse* resp)
 {
     pkt_count_++;
 
-    uint32_t    qos_class = 0;
-    std::string next_hop;
-    std::string action = classify(req, qos_class, next_hop);
+    if (pool_) {
+        // Multi-threaded: dispatch to thread pool
+        // Use promise/future to block until worker finishes
+        auto promise = std::make_shared<std::promise<void>>();
+        auto future  = promise->get_future();
 
-    resp->set_action(action);
-    resp->set_next_hop(next_hop);
-    resp->set_qos_class(qos_class);
-    resp->set_timestamp_us(now_us());
+        // Copy request (req pointer is only valid during this call)
+        n4::PacketClassifyRequest req_copy = *req;
 
-    if (action == "FORWARD") fwd_count_++;
-    else                     drop_count_++;
+        pool_->enqueue([this, req_copy, resp, promise]() mutable {
+            uint32_t    qos_class = 0;
+            std::string next_hop;
+            std::string action = classify(&req_copy, qos_class, next_hop);
+
+            resp->set_action(action);
+            resp->set_next_hop(next_hop);
+            resp->set_qos_class(qos_class);
+            resp->set_timestamp_us(now_us());
+
+            if (action == "FORWARD") fwd_count_++;
+            else                     drop_count_++;
+
+            promise->set_value();
+        });
+
+        future.wait();
+    } else {
+        // Single-threaded: classify directly
+        uint32_t    qos_class = 0;
+        std::string next_hop;
+        std::string action = classify(req, qos_class, next_hop);
+
+        resp->set_action(action);
+        resp->set_next_hop(next_hop);
+        resp->set_qos_class(qos_class);
+        resp->set_timestamp_us(now_us());
+
+        if (action == "FORWARD") fwd_count_++;
+        else                     drop_count_++;
+    }
 
     return grpc::Status::OK;
 }
+
+// ── Private helpers ───────────────────────────────────────────────────────
 
 std::string UpfServiceImpl::generate_session_id() {
     std::ostringstream oss;
@@ -104,22 +155,33 @@ std::string UpfServiceImpl::classify(
     uint32_t& qos_out,
     std::string& next_hop_out)
 {
-    auto sit = ue_to_session_.find(req->src_ip());
-    if (sit == ue_to_session_.end()) {
+    // Lock only for session lookup — released before processing
+    std::string session_id;
+    uint32_t    qos_profile = 0;
+    bool        session_active = false;
+
+    {
+        std::lock_guard<std::mutex> lock(sessions_mutex_);
+        auto sit = ue_to_session_.find(req->src_ip());
+        if (sit == ue_to_session_.end()) {
+            qos_out      = 0;
+            next_hop_out = "";
+            return "DROP";
+        }
+        const PduSession& session = sessions_.at(sit->second);
+        qos_profile    = session.qos_profile;
+        session_active = session.active;
+    }
+
+    if (!session_active) {
         qos_out      = 0;
         next_hop_out = "";
         return "DROP";
     }
 
-    const PduSession& session = sessions_.at(sit->second);
-    if (!session.active) {
-        qos_out      = 0;
-        next_hop_out = "";
-        return "DROP";
-    }
+    qos_out = qos_profile;
 
-    qos_out = session.qos_profile;
-
+    // Block RFC-1918 private destinations
     if (req->dst_ip().substr(0, 3) == "10." ||
         req->dst_ip().substr(0, 8) == "192.168.") {
         return "DROP";
