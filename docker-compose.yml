@@ -1,0 +1,60 @@
+version: "3.9"
+
+networks:
+  5g-core:
+    driver: bridge
+
+services:
+
+  upf:
+    build:
+      context: .
+      dockerfile: upf/Dockerfile
+    container_name: upf
+    hostname: upf
+    environment:
+      - UPF_PORT=50052
+    ports:
+      - "50052:50052"
+    networks:
+      - 5g-core
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 1 bash -c 'cat < /dev/null > /dev/tcp/localhost/50052' && echo ok || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  amf:
+    build:
+      context: .
+      dockerfile: amf/Dockerfile
+    container_name: amf
+    hostname: amf
+    environment:
+      - AMF_PORT=50051
+      - UPF_ADDRESS=upf:50052
+    ports:
+      - "50051:50051"
+    networks:
+      - 5g-core
+    depends_on:
+      upf:
+        condition: service_healthy
+    restart: unless-stopped
+
+  ue-sim:
+    build:
+      context: .
+      dockerfile: ue-sim/Dockerfile
+    container_name: ue-sim
+    environment:
+      - AMF_ADDRESS=amf:50051
+      - UPF_ADDRESS=upf:50052
+      - NUM_UES=500
+    networks:
+      - 5g-core
+    depends_on:
+      - amf
+      - upf
+    restart: "no"
