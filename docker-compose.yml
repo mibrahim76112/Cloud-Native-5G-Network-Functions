@@ -51,7 +51,7 @@ services:
     environment:
       - AMF_ADDRESS=amf:50051
       - UPF_ADDRESS=upf:50052
-      - NUM_UES=500
+      - NUM_UES=50
     networks:
       - 5g-core
     depends_on:
