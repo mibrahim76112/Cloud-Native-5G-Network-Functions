@@ -1,6 +1,6 @@
 # 5G Cloud-Native Network Functions
 
-A C++17 implementation of two 5G core Network Functions — AMF and UPF — communicating over gRPC, containerized with Docker, and orchestrated on Kubernetes. Built as a performance benchmarking platform to evaluate transport protocols, thread-pool scaling, and observability patterns for COTS hardware deployment — mirroring engineering decisions made in real 5G core products at companies like Nokia and Ericsson.
+A C++ implementation of two 5G core Network Functions — AMF and UPF — communicating over gRPC, containerized with Docker, and orchestrated on Kubernetes. Built as a performance benchmarking platform to evaluate transport protocols, thread-pool scaling, and observability patterns for COTS hardware deployment, mirroring engineering decisions made in real 5G core products at companies like Nokia and Ericsson.
 
 ---
 
